@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Braille haptic reader</title>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);--bg:#fff;--fg:#1c1b19;--mut:#6b6a64;--card:#f4f2ec;--bd:#d6d3c9;--acc:#0F6E56;--accfg:#fff;--dot:#cfcdc3;--hot:#1D9E75}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#1c1b19;--fg:#f1efe8;--mut:#a8a69c;--card:#2a2926;--bd:#47453f;--acc:#5DCAA5;--accfg:#04342C;--dot:#47453f;--hot:#5DCAA5}}
+:root[data-theme="dark"]{--bg:#1c1b19;--fg:#f1efe8;--mut:#a8a69c;--card:#2a2926;--bd:#47453f;--acc:#5DCAA5;--accfg:#04342C;--dot:#47453f;--hot:#5DCAA5}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;line-height:1.5}
+main{max-width:420px;margin:0 auto;padding:16px}
+h1{font-size:20px;font-weight:500;margin:0 0 4px}
+p{margin:4px 0;color:var(--mut);font-size:14px}
+.tabs{display:flex;gap:8px;margin:14px 0}
+button{font:inherit;font-size:15px;padding:10px 14px;border-radius:8px;border:1px solid var(--bd);background:var(--card);color:var(--fg);cursor:pointer}
+button.on{background:var(--acc);color:var(--accfg);border-color:var(--acc)}
+.tabs button{flex:1}
+.cell{display:flex;justify-content:center;margin:18px 0}
+#grid{display:grid;grid-template-columns:repeat(2,84px);grid-template-rows:repeat(3,84px);grid-auto-flow:column;gap:20px;padding:22px;background:var(--card);border-radius:16px;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+.dot{border-radius:50%;background:var(--dot);display:flex;align-items:center;justify-content:center;font-size:13px;color:var(--mut);border:2px solid transparent}
+.dot.touch{border-color:var(--hot)}
+.dot.on{background:var(--hot);color:var(--accfg)}
+.row{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
+.out{background:var(--card);border-radius:12px;padding:12px 14px;margin-top:10px;min-height:24px;font-size:15px;word-break:break-word}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px}
+.hide{display:none}
+#status{font-size:13px}
+.tabs button{padding:10px 6px}
+#msg{width:100%;box-sizing:border-box;font:inherit;font-size:16px;padding:10px 12px;border-radius:8px;border:1px solid var(--bd);background:var(--card);color:var(--fg)}
+#chips{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}
+.chip{display:flex;flex-direction:column;align-items:center;min-width:44px;padding:6px 8px}
+.chip .g{font-size:28px;line-height:1.1}
+.chip .l{font-size:12px;color:var(--mut)}
+.chip.sel{border-color:var(--acc);outline:2px solid var(--acc)}
+</style>
+</head>
+<body>
+<main>
+<h1>Braille haptic reader</h1>
+<p id="status"></p>
+<div class="tabs">
+  <button id="tFeel" class="on">Feel</button>
+  <button id="tType">Type</button>
+  <button id="tText">Text → Braille</button>
+</div>
+<p id="help"></p>
+<div class="cell"><div id="grid"></div></div>
+
+<div id="feelUI">
+  <div class="row"><button id="reveal">Reveal</button><button id="next">Next letter</button></div>
+</div>
+<div id="typeUI" class="hide">
+  <div class="row"><button id="add">Add</button><button id="space">Space</button><button id="back">Back</button><button id="clear">Clear</button><button id="speak">Speak</button></div>
+</div>
+<div id="textUI" class="hide">
+  <input id="msg" type="text" placeholder="Type a word, e.g. hello" autocomplete="off" autocapitalize="off" maxlength="40">
+  <div id="chips"></div>
+  <div class="row"><button id="play">Play all (haptic)</button><button id="stop">Stop</button></div>
+</div>
+<div class="out" id="readout"></div>
+<div class="out" id="text"></div>
+<div class="row"><button id="test">Test buzz</button></div>
+</main>
+<script>
+var MAP={a:'1',b:'12',c:'14',d:'145',e:'15',f:'124',g:'1245',h:'125',i:'24',j:'245',k:'13',l:'123',m:'134',n:'1345',o:'135',p:'1234',q:'12345',r:'1235',s:'234',t:'2345',u:'136',v:'1236',w:'2456',x:'1346',y:'13456',z:'1356'};
+function bitsOf(set){var s='';for(var i=6;i>=1;i--)s+=set.has(i)?'1':'0';return s}
+var TABLE={};
+Object.keys(MAP).forEach(function(c){TABLE[bitsOf(new Set(MAP[c].split('').map(Number)))]=c});
+function decode(set){
+  var b=bitsOf(set);
+  if(b==='000000')return{b:b,ch:' ',ok:true};
+  var c=TABLE[b];
+  return{b:b,ch:c||'?',ok:!!c};
+}
+function vib(p){try{if(navigator.vibrate)navigator.vibrate(p)}catch(e){}}
+
+var grid=document.getElementById('grid'),readout=document.getElementById('readout'),textEl=document.getElementById('text'),help=document.getElementById('help');
+var mode='feel',active=new Set(),cur=0,revealed=false,text='',target='a';
+for(var n=1;n<=6;n++){var d=document.createElement('div');d.className='dot';d.dataset.n=n;d.textContent=n;grid.appendChild(d)}
+var dots=grid.children;
+
+document.getElementById('status').textContent=('vibrate' in navigator)?
+  'Vibration: available on this device':'Vibration: not available here. Open on Android Chrome.';
+
+function paint(){
+  for(var i=0;i<6;i++){
+    var n=i+1,el=dots[i];
+    el.classList.toggle('touch',cur===n);
+    el.classList.toggle('on',(mode!=='feel'||revealed)&&active.has(n));
+  }
+}
+function info(){
+  var r=decode(active),hex=r.ok?'0x'+r.ch.charCodeAt(0).toString(16).toUpperCase():'-';
+  if(mode==='text'&&sel<0){readout.textContent='Type letters above (a-z and spaces).';return}
+  if(mode==='feel'&&!revealed){readout.innerHTML='Slide a finger over the dots. Raised dots buzz.';return}
+  readout.innerHTML='<code>dots[5:0] = '+r.b+'</code> &rarr; '+(r.ok?'<code>'+hex+'</code> &ldquo;'+(r.ch===' '?'space':r.ch)+'&rdquo;':'not a letter');
+}
+function setTarget(){
+  target='abcdefghijklmnopqrstuvwxyz'[Math.floor(Math.random()*26)];
+  active=new Set(MAP[target].split('').map(Number));
+  revealed=false;paint();info();
+}
+function setMode(m){
+  stopPlay();mode=m;active=new Set();revealed=false;cur=0;vib(0);
+  document.getElementById('tFeel').classList.toggle('on',m==='feel');
+  document.getElementById('tType').classList.toggle('on',m==='type');
+  document.getElementById('feelUI').classList.toggle('hide',m!=='feel');
+  document.getElementById('typeUI').classList.toggle('hide',m!=='type');
+  document.getElementById('textUI').classList.toggle('hide',m!=='text');
+  document.getElementById('tText').classList.toggle('on',m==='text');
+  textEl.classList.toggle('hide',m!=='type');
+  help.textContent={feel:'Hidden letter. Drag your finger across the six dots and feel which ones are raised.',type:'Tap dots to raise them, then press Add. The decoder turns the pattern into a letter.',text:'Type a word (a-z and spaces). Tap a letter to load it in the cell and slide your finger over the dots, or press Play to feel the whole word.'}[m];
+  if(m==='feel')setTarget();else if(m==='text')update();else{paint();info()}
+  renderText();
+}
+function renderText(){textEl.textContent=text||'Your text appears here';}
+
+function dotAt(e){var el=document.elementFromPoint(e.clientX,e.clientY);var d=el&&el.closest&&el.closest('.dot');return d?+d.dataset.n:0}
+function slide(e){
+  var n=dotAt(e);if(n===cur)return;cur=n;paint();
+  if(mode!=='type'){if(n&&active.has(n))vib(1000);else vib(0)}
+}
+grid.addEventListener('pointerdown',function(e){
+  if(mode==='type'){var n=dotAt(e);if(n){if(active.has(n))active.delete(n);else active.add(n);vib(30);paint();info()}return}
+  slide(e);
+});
+grid.addEventListener('pointermove',function(e){if(mode!=='type'&&e.buttons)slide(e)});
+function lift(){cur=0;vib(0);paint()}
+grid.addEventListener('pointerup',lift);
+grid.addEventListener('pointercancel',lift);
+grid.addEventListener('contextmenu',function(e){e.preventDefault()});
+
+document.getElementById('tFeel').onclick=function(){setMode('feel')};
+document.getElementById('tType').onclick=function(){setMode('type')};
+document.getElementById('tText').onclick=function(){setMode('text')};
+document.getElementById('reveal').onclick=function(){revealed=true;paint();info()};
+document.getElementById('next').onclick=setTarget;
+document.getElementById('add').onclick=function(){
+  var r=decode(active);
+  if(active.size&&r.ok){text+=r.ch;var p=[];for(var i=0;i<active.size;i++){p.push(60,60)}vib(p)}
+  else vib(300);
+  active=new Set();paint();info();renderText();
+};
+document.getElementById('space').onclick=function(){text+=' ';renderText()};
+document.getElementById('back').onclick=function(){text=text.slice(0,-1);renderText()};
+document.getElementById('clear').onclick=function(){text='';renderText()};
+document.getElementById('speak').onclick=function(){
+  try{speechSynthesis.cancel();speechSynthesis.speak(new SpeechSynthesisUtterance(text))}catch(e){}
+};
+document.getElementById('test').onclick=function(){vib(300)};
+
+/* ---- Text -> Braille ---- */
+var msg=document.getElementById('msg'),chipsEl=document.getElementById('chips'),items=[],sel=-1,timers=[];
+function cellOf(ch){
+  if(ch===' ')return new Set();
+  var d=MAP[ch];return d?new Set(d.split('').map(Number)):null;
+}
+// Unicode braille: dot n = bit (n-1), same bit order as the Verilog decoder
+function glyph(set){return String.fromCharCode(0x2800+parseInt(bitsOf(set),2))}
+function update(){
+  var s=msg.value.toLowerCase();items=[];
+  for(var i=0;i<s.length;i++){var set=cellOf(s[i]);if(set)items.push({ch:s[i],set:set})}
+  if(!items.length)sel=-1;else if(sel<0||sel>=items.length)sel=0;
+  active=sel>=0?items[sel].set:new Set();
+  chipsEl.innerHTML='';
+  items.forEach(function(it,i){
+    var b=document.createElement('button');b.className='chip'+(i===sel?' sel':'');
+    b.innerHTML='<span class="g">'+glyph(it.set)+'</span><span class="l">'+(it.ch===' '?'space':it.ch)+'</span>';
+    b.onclick=function(){sel=i;vib(30);update()};
+    chipsEl.appendChild(b);
+  });
+  paint();info();
+}
+// One letter = 6 slots (dot1..dot6), 150 ms each: raised = buzz, empty = silence
+function patternFor(set){
+  var seg=[];
+  function push(on,ms){var l=seg[seg.length-1];if(l&&l[0]===on)l[1]+=ms;else seg.push([on,ms])}
+  for(var d=1;d<=6;d++){if(set.has(d)){push(true,110);push(false,40)}else push(false,150)}
+  var p=seg.map(function(s){return s[1]});
+  if(!seg[0][0])p.unshift(1);
+  return p;
+}
+function stopPlay(){timers.forEach(clearTimeout);timers=[];vib(0)}
+function play(){
+  stopPlay();var t=0;
+  items.forEach(function(it,i){
+    timers.push(setTimeout(function(){sel=i;update();vib(patternFor(it.set))},t));
+    t+=1500;
+  });
+}
+msg.addEventListener('input',update);
+document.getElementById('play').onclick=play;
+document.getElementById('stop').onclick=stopPlay;
+setMode('feel');
+</script>
+</body>
+</html>
