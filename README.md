@@ -156,7 +156,6 @@ iPhones have no web vibration API. The app uses a Safari workaround (a haptic ti
 - Letters a to z and space only. Numbers, capitals and punctuation are not implemented.
 - 
 -Where Verilog is used: the desktop part. When you run braille_app.py, it writes your dot patterns to a file, compiles braille_decoder.v and tb_braille.v with Icarus Verilog, runs the simulation, and reads the ASCII results back. Every letter you type goes through the Verilog decoder, and the self-test I ran confirmed all 26 letters decode correctly that way.
-
--Where it isn’t: the phone app. braille_haptic.html has its own JavaScript copy of the same lookup table, because a phone browser can’t run Verilog.
+-Phone uses Javascript copy of the same  verilog code as we cant run verilog on the phone
 - gem5 is not used in this project. It simulates CPUs and memory systems, not RTL, so it isn't needed for the decoder.
 - iPhone haptics are best-effort and untested on real devices.
